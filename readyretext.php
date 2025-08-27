@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Ready ReText
  * Description:       یک افزونه پیشرفته برای جستجو و جایگزینی متن در تمام بخش‌های سایت وردپرس با پنل تنظیمات کامل.
- * Version:           3.3.0
+ * Version:           4.0.0
  * Author:            Ready Studio & Gemini
  * Author URI:        https://readystudio.ir/
  * License:           GPL-2.0+
@@ -23,12 +23,49 @@ class ReadyReText {
         add_action('admin_init', [$this, 'register_settings']);
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_settings_link']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_styles']);
-        $this->init_replacement_hooks();
+        
+        // ** NEW **: Enqueue frontend script for client-side replacements
+        add_action('wp_enqueue_scripts', [$this, 'enqueue_frontend_scripts']);
+
+        add_action('init', [$this, 'init_replacement_logic']);
     }
 
     public function enqueue_admin_styles($hook) {
         if ('settings_page_readyretext' !== $hook) return;
-        wp_enqueue_style('readyretext-admin-styles', plugin_dir_url(__FILE__) . 'assets/admin-styles.css', [], '3.3.0');
+        wp_enqueue_style('readyretext-admin-styles', plugin_dir_url(__FILE__) . 'assets/admin-styles.css', [], '4.0.0');
+    }
+
+    public function enqueue_frontend_scripts() {
+        $all_rules = $this->options['rules'] ?? [];
+        if (empty($all_rules)) return;
+
+        $frontend_rules = array_filter($all_rules, function($rule) {
+            return ($rule['scope'] ?? 'all') === 'all' || ($rule['scope'] ?? 'all') === 'frontend';
+        });
+
+        if (empty($frontend_rules)) return;
+
+        $js_rules = [];
+        foreach ($frontend_rules as $rule) {
+            $flags = 'g'; // Global flag is essential in JS
+            if (!empty($rule['case_insensitive'])) $flags .= 'i';
+            
+            // In JS, we need to escape backslashes for the RegExp constructor
+            $find_pattern = $rule['is_regex'] 
+                ? $rule['find'] 
+                : '\\b' . preg_quote($rule['find'], '/') . '\\b';
+
+            $js_rules[] = [
+                'find'    => $find_pattern,
+                'replace' => $rule['replace'],
+                'flags'   => $flags,
+            ];
+        }
+
+        wp_enqueue_script('readyretext-frontend-replacer', plugin_dir_url(__FILE__) . 'assets/frontend-replacer.js', [], '4.0.0', true);
+        wp_localize_script('readyretext-frontend-replacer', 'readyReTextData', [
+            'rules' => $js_rules
+        ]);
     }
 
     public function add_admin_menu() {
@@ -187,16 +224,13 @@ class ReadyReText {
 
             $('#readyretext-rules-wrapper').on('click', '.readyretext-duplicate-rule', function() {
                 const rowToClone = $(this).closest('.readyretext-rule-row');
-                
                 const findVal = rowToClone.find('input[name*="[find]"]').val();
                 const replaceVal = rowToClone.find('input[name*="[replace]"]').val();
                 const scopeVal = rowToClone.find('select[name*="[scope]"]').val();
                 const isRegexChecked = rowToClone.find('input[name*="[is_regex]"]').is(':checked');
                 const isCaseInsensitiveChecked = rowToClone.find('input[name*="[case_insensitive]"]').is(':checked');
-
                 addNewRow();
                 const newRow = $('#readyretext-rules-container .readyretext-rule-row:last');
-
                 newRow.find('input[name*="[find]"]').val(findVal);
                 newRow.find('input[name*="[replace]"]').val(replaceVal);
                 newRow.find('select[name*="[scope]"]').val(scopeVal);
@@ -214,7 +248,7 @@ class ReadyReText {
         return $links;
     }
     
-    private function init_replacement_hooks() {
+    public function init_replacement_logic() {
         $all_rules = $this->options['rules'] ?? [];
         if (empty($all_rules)) return;
         
@@ -242,49 +276,16 @@ class ReadyReText {
         
         if (empty($patterns)) return;
 
-        $is_urlish = function($str) { return is_string($str) && $str !== '' && preg_match('~(^[a-z]+://|://|www\.|/|\\\|\.php\b|\.html\b|\.htm\b|^#)~i', $str); };
-        $replace_plain = function($text) use ($patterns, $replacements, $is_urlish) {
-            return (!is_string($text) || $text === '' || $is_urlish($text)) ? $text : preg_replace($patterns, $replacements, $text);
-        };
-        $replace_html_textnodes = function ($html) use ($patterns, $replacements) {
-            if (!is_string($html) || trim($html) === '') return $html;
-            if (strip_tags($html) === $html) return preg_replace($patterns, $replacements, $html);
-            $dom = new DOMDocument();
-            libxml_use_internal_errors(true);
-            if (!$dom->loadHTML('<?xml encoding="utf-8" ?>' . $html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD)) {
-                libxml_clear_errors(); return $html;
-            }
-            libxml_clear_errors();
-            $xpath = new DOMXPath($dom);
-            foreach ($xpath->query('//text()[not(ancestor::script) and not(ancestor::style)]') as $node) {
-                if (trim($node->nodeValue) === '') continue;
-                $newNodeValue = preg_replace($patterns, $replacements, $node->nodeValue);
-                if ($newNodeValue !== $node->nodeValue) $node->nodeValue = $newNodeValue;
-            }
-            $output = $dom->saveHTML();
-            return preg_replace('/^<\?xml.*?\?>/i', '', $output);
+        $replace_plain = function($text) use ($patterns, $replacements) {
+            $is_urlish = is_string($text) && $text !== '' && preg_match('~(^[a-z]+://|://|www\.|/|\\\|\.php\b|\.html\b|\.htm\b|^#)~i', $text);
+            return (!is_string($text) || $text === '' || $is_urlish) ? $text : preg_replace($patterns, $replacements, $text);
         };
 
+        // Apply only essential server-side filters
         add_filter('gettext', $replace_plain, 20);
         add_filter('ngettext', function($s, $p, $n) use ($replace_plain) { return (1 != $n ? $replace_plain($p) : $replace_plain($s)); }, 20, 3);
-        $html_filters = ['the_content', 'the_excerpt', 'comment_text', 'widget_text', 'widget_block_content', 'the_tags', 'the_category', 'the_author', 'wp_nav_menu_items', 'wp_list_pages', 'the_archive_title', 'the_archive_description', 'woocommerce_product_title', 'woocommerce_short_description'];
-        foreach ($html_filters as $hook) add_filter($hook, $replace_html_textnodes, 20);
         add_filter('the_title', $replace_plain, 20);
-        add_filter('document_title_parts', function($p) use ($replace_plain) { return is_array($p) ? array_map($replace_plain, $p) : $p; }, 20);
-        add_filter('nav_menu_item_title', $replace_plain, 20);
-        add_filter('bloginfo', function ($output, $show) use ($replace_plain, $active_rules) {
-            $cache_key = 'rrt_bloginfo_' . md5($show . serialize($active_rules));
-            if (false === ($cached = get_transient($cache_key))) {
-                $cached = $replace_plain($output);
-                set_transient($cache_key, $cached, HOUR_IN_SECONDS);
-            }
-            return $cached;
-        }, 20, 2);
-        if (function_exists('acf_add_filter')) {
-            add_filter('acf/format_value', function($v) use ($replace_html_textnodes, $replace_plain) {
-                return is_string($v) ? (($v !== strip_tags($v)) ? $replace_html_textnodes($v) : $replace_plain($v)) : $v;
-            }, 20);
-        }
+        add_filter('wp_title', $replace_plain, 20);
     }
 }
 new ReadyReText();
