@@ -1,220 +1,274 @@
 <?php
-/*
-Plugin Name: Ready ReText
-Plugin URI: https://example.com/readyretext
-Description: Advanced text replacement plugin for WordPress. Replace texts sitewide without affecting URLs, paths, or HTML attributes. Features advanced settings for multiple rules, regex support, case sensitivity, and scope selection (all site, frontend only, or admin only).
-Version: 1.0.0
-Author: Grok (built by xAI)
-Author URI: https://x.ai
-License: GPL-2.0-or-later
-Text Domain: readyretext
-*/
+/**
+ * Plugin Name:       Ready ReText
+ * Description:       یک افزونه پیشرفته برای جستجو و جایگزینی متن در تمام بخش‌های سایت وردپرس با پنل تنظیمات کامل.
+ * Version:           1.1.0
+ * Author:            Ready Studio & Gemini
+ * Author URI:        https://readystudio.ir/
+ * License:           GPL-2.0+
+ * License URI:       http://www.gnu.org/licenses/gpl-2.0.txt
+ * Text Domain:       readyretext
+ * Domain Path:       /languages
+ */
 
-if (!defined('ABSPATH')) exit;
+if (!defined('ABSPATH')) exit; // Exit if accessed directly
 
 class ReadyReText {
-    private $option_name = 'readyretext_settings';
-    private $defaults = [
-        'scope' => 'all', // 'all', 'frontend', 'admin'
-        'replacements' => [], // array of [ 'from' => '', 'to' => '', 'is_regex' => false, 'case_insensitive' => true ]
-    ];
 
+    private $options;
+
+    /**
+     * Constructor: Hooks into WordPress.
+     */
     public function __construct() {
-        add_action('admin_menu', [$this, 'add_settings_page']);
-        add_action('admin_init', [$this, 'register_settings']);
-        add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
+        // Load options from the database with defaults
+        $this->options = get_option('readyretext_settings', [
+            'scope' => 'frontend',
+            'rules' => [],
+        ]);
 
-        // Apply filters only if enabled
-        add_action('init', [$this, 'apply_replacements']);
+        // Add settings page to the admin menu
+        add_action('admin_menu', [$this, 'add_admin_menu']);
+        // Register settings
+        add_action('admin_init', [$this, 'register_settings']);
+        // Add settings link on plugin page
+        add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_settings_link']);
+
+        /**
+     * Enqueues admin styles for the settings page.
+     */
+    public function enqueue_admin_styles($hook) {
+        // Only load on our plugin's settings page
+        if ('settings_page_readyretext' !== $hook) {
+            return;
+        }
+        $plugin_url = plugin_dir_url(__FILE__);
+        wp_enqueue_style(
+            'readyretext-admin-styles',
+            $plugin_url . 'assets/admin-styles.css',
+            [],
+            '1.1.0' // Plugin version
+        );
+    }
+        // Execute the replacement logic based on the selected scope
+        $this->init_replacement_hooks();
     }
 
-    public function add_settings_page() {
+    /**
+     * Adds the settings page to the WordPress admin menu.
+     */
+    public function add_admin_menu() {
         add_options_page(
-            'Ready ReText Settings',
-            'Ready ReText',
-            'manage_options',
-            'readyretext',
-            [$this, 'render_settings_page']
+            'تنظیمات جایگزینی متن',      // Page Title
+            'Ready ReText',             // Menu Title
+            'manage_options',           // Capability
+            'readyretext',              // Menu Slug
+            [$this, 'render_settings_page'] // Callback function
         );
     }
 
-    public function register_settings() {
-        register_setting($this->option_name, $this->option_name, [$this, 'validate_settings']);
-        add_settings_section('general', 'General Settings', [$this, 'general_section_callback'], 'readyretext');
-        add_settings_field('scope', 'Apply To', [$this, 'scope_field_callback'], 'readyretext', 'general');
-        add_settings_field('replacements', 'Replacement Rules', [$this, 'replacements_field_callback'], 'readyretext', 'general');
-    }
-
-    public function general_section_callback() {
-        echo '<p>Configure text replacements across your WordPress site. Add multiple rules, use regex for advanced patterns, and control where replacements apply.</p>';
-    }
-
-    public function scope_field_callback() {
-        $options = $this->get_options();
-        $scope = $options['scope'];
-        ?>
-        <select name="<?php echo $this->option_name; ?>[scope]">
-            <option value="all" <?php selected($scope, 'all'); ?>>All Site (Frontend & Admin)</option>
-            <option value="frontend" <?php selected($scope, 'frontend'); ?>>Frontend Only</option>
-            <option value="admin" <?php selected($scope, 'admin'); ?>>Admin Only</option>
-        </select>
-        <p class="description">Choose where the replacements should be applied.</p>
-        <?php
-    }
-
-    public function replacements_field_callback() {
-        $options = $this->get_options();
-        $replacements = $options['replacements'];
-        $index = count($replacements); // For JS to start from here
-        ?>
-        <table id="replacements-table" class="wp-list-table widefat striped">
-            <thead>
-                <tr>
-                    <th>From (Text or Regex)</th>
-                    <th>To</th>
-                    <th>Regex?</th>
-                    <th>Case Insensitive?</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (!empty($replacements)): ?>
-                    <?php foreach ($replacements as $idx => $rule): ?>
-                        <tr>
-                            <td><input type="text" name="<?php echo $this->option_name; ?>[replacements][<?php echo $idx; ?>][from]" value="<?php echo esc_attr($rule['from']); ?>" class="widefat" /></td>
-                            <td><input type="text" name="<?php echo $this->option_name; ?>[replacements][<?php echo $idx; ?>][to]" value="<?php echo esc_attr($rule['to']); ?>" class="widefat" /></td>
-                            <td><input type="checkbox" name="<?php echo $this->option_name; ?>[replacements][<?php echo $idx; ?>][is_regex]" <?php checked($rule['is_regex'], true); ?> /></td>
-                            <td><input type="checkbox" name="<?php echo $this->option_name; ?>[replacements][<?php echo $idx; ?>][case_insensitive]" <?php checked($rule['case_insensitive'], true); ?> /></td>
-                            <td><button type="button" class="button button-secondary remove-row">Remove</button></td>
-                        </tr>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </tbody>
-        </table>
-        <button type="button" id="add-replacement-row" class="button button-primary">Add Rule</button>
-        <p class="description">Add rules for text replacement. For regex, enable the checkbox and enter a valid PHP regex pattern (e.g., /\bword\b/i). Replacements won't affect URLs, paths, or HTML attributes.</p>
-        <script type="text/javascript">
-        jQuery(document).ready(function($) {
-            var table = $('#replacements-table tbody');
-            var index = <?php echo $index; ?>;
-
-            $('#add-replacement-row').on('click', function() {
-                var row = '<tr>' +
-                    '<td><input type="text" name="<?php echo $this->option_name; ?>[replacements][' + index + '][from]" class="widefat" /></td>' +
-                    '<td><input type="text" name="<?php echo $this->option_name; ?>[replacements][' + index + '][to]" class="widefat" /></td>' +
-                    '<td><input type="checkbox" name="<?php echo $this->option_name; ?>[replacements][' + index + '][is_regex]" /></td>' +
-                    '<td><input type="checkbox" name="<?php echo $this->option_name; ?>[replacements][' + index + '][case_insensitive]" checked /></td>' +
-                    '<td><button type="button" class="button button-secondary remove-row">Remove</button></td>' +
-                '</tr>';
-                table.append(row);
-                index++;
-            });
-
-            table.on('click', '.remove-row', function() {
-                $(this).closest('tr').remove();
-            });
-        });
-        </script>
-        <?php
-    }
-
+    /**
+     * Renders the HTML for the settings page.
+     */
     public function render_settings_page() {
         ?>
         <div class="wrap">
-            <h1>Ready ReText Settings</h1>
-            <form method="post" action="options.php">
+            <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
+            <p>در این صفحه می‌توانید قوانین جایگزینی متن در سایت را مدیریت کنید.</p>
+            
+            <form action="options.php" method="post">
                 <?php
-                settings_fields($this->option_name);
+                settings_fields('readyretext_settings_group');
                 do_settings_sections('readyretext');
-                submit_button();
+                submit_button('ذخیره تغییرات');
                 ?>
             </form>
         </div>
         <?php
     }
 
-    public function validate_settings($input) {
-        $output = [];
-        $output['scope'] = in_array($input['scope'] ?? 'all', ['all', 'frontend', 'admin']) ? $input['scope'] : 'all';
+    /**
+     * Registers the settings, sections, and fields for the settings page.
+     */
+    public function register_settings() {
+        register_setting('readyretext_settings_group', 'readyretext_settings', [$this, 'sanitize_settings']);
 
-        $output['replacements'] = [];
-        if (isset($input['replacements']) && is_array($input['replacements'])) {
-            foreach ($input['replacements'] as $rule) {
-                if (!empty($rule['from']) && isset($rule['to'])) {
-                    $output['replacements'][] = [
-                        'from' => sanitize_text_field($rule['from']),
-                        'to' => wp_kses_post($rule['to']), // Allow HTML in 'to' if needed
-                        'is_regex' => isset($rule['is_regex']),
-                        'case_insensitive' => isset($rule['case_insensitive']),
-                    ];
+        // General Settings Section
+        add_settings_section(
+            'readyretext_general_section', 'تنظیمات عمومی', null, 'readyretext'
+        );
+
+        add_settings_field(
+            'readyretext_scope_field', 'محدوده اعمال', [$this, 'render_scope_field'], 'readyretext', 'readyretext_general_section'
+        );
+
+        // Rules Section
+        add_settings_section(
+            'readyretext_rules_section', 'قوانین جایگزینی',
+            function() { echo '<p>قوانین مورد نظر برای جایگزینی متن را در اینجا وارد کنید. برای الگوهای پیچیده، گزینه "Regex" را فعال کنید.</p>'; },
+            'readyretext'
+        );
+
+        add_settings_field(
+            'readyretext_rules_field', 'لیست قوانین', [$this, 'render_rules_field'], 'readyretext', 'readyretext_rules_section'
+        );
+    }
+
+    /**
+     * Sanitizes the settings data before saving.
+     */
+    public function sanitize_settings($input) {
+        $new_input = [];
+
+        $allowed_scopes = ['all', 'frontend', 'admin'];
+        $new_input['scope'] = in_array($input['scope'], $allowed_scopes) ? $input['scope'] : 'frontend';
+
+        if (isset($input['rules']) && is_array($input['rules'])) {
+            $new_input['rules'] = array_values(array_filter(array_map(function($rule) {
+                if (empty(trim($rule['find']))) {
+                    return null;
                 }
-            }
+                return [
+                    'find'             => sanitize_text_field(stripslashes($rule['find'])),
+                    'replace'          => wp_kses_post(stripslashes($rule['replace'])), // Allow safe HTML
+                    'is_regex'         => isset($rule['is_regex']),
+                    'case_insensitive' => isset($rule['case_insensitive']),
+                ];
+            }, $input['rules'])));
+        } else {
+            $new_input['rules'] = [];
         }
-        return $output;
+
+        return $new_input;
     }
 
-    public function enqueue_assets($hook) {
-        if ($hook !== 'settings_page_readyretext') return;
-        // No separate JS file needed since it's inline
+    /**
+     * Renders the scope selection field.
+     */
+    public function render_scope_field() {
+        $scope = $this->options['scope'] ?? 'frontend';
+        ?>
+        <fieldset>
+            <label><input type="radio" name="readyretext_settings[scope]" value="frontend" <?php checked($scope, 'frontend'); ?>> فقط بخش کاربری (Frontend)</label><br>
+            <label><input type="radio" name="readyretext_settings[scope]" value="admin" <?php checked($scope, 'admin'); ?>> فقط بخش مدیریت (Admin)</label><br>
+            <label><input type="radio" name="readyretext_settings[scope]" value="all" <?php checked($scope, 'all'); ?>> کل سایت (Frontend + Admin)</label>
+        </fieldset>
+        <?php
     }
 
-    private function get_options() {
-        return wp_parse_args(get_option($this->option_name, []), $this->defaults);
+    /**
+     * Renders the dynamic rules fields.
+     */
+    public function render_rules_field() {
+        $rules = $this->options['rules'] ?? [];
+        ?>
+        <div id="readyretext-rules-wrapper">
+            <table class="wp-list-table widefat fixed striped">
+                <thead>
+                    <tr>
+                        <th style="width:35%;">متن اصلی (یا الگوی Regex)</th>
+                        <th style="width:35%;">متن جایگزین (HTML مجاز است)</th>
+                        <th style="width:10%; text-align:center;">Regex</th>
+                        <th style="width:10%; text-align:center;">حساس به حروف</th>
+                        <th style="width:10%;"></th>
+                    </tr>
+                </thead>
+                <tbody id="readyretext-rules-container">
+                    <?php if (empty($rules)) : ?>
+                        <tr class="readyretext-rule-row no-rules-row"><td colspan="5">هیچ قانونی تعریف نشده است.</td></tr>
+                    <?php else : ?>
+                        <?php foreach ($rules as $index => $rule) : ?>
+                            <tr class="readyretext-rule-row">
+                                <td><input type="text" class="large-text" name="readyretext_settings[rules][<?php echo $index; ?>][find]" value="<?php echo esc_attr($rule['find']); ?>"></td>
+                                <td><input type="text" class="large-text" name="readyretext_settings[rules][<?php echo $index; ?>][replace]" value="<?php echo esc_attr($rule['replace']); ?>"></td>
+                                <td style="text-align:center;"><input type="checkbox" name="readyretext_settings[rules][<?php echo $index; ?>][is_regex]" <?php checked($rule['is_regex'] ?? false, true); ?>></td>
+                                <td style="text-align:center;"><input type="checkbox" name="readyretext_settings[rules][<?php echo $index; ?>][case_insensitive]" <?php checked($rule['case_insensitive'] ?? false, true); ?>></td>
+                                <td><button type="button" class="button button-secondary readyretext-remove-rule">حذف</button></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+            <p style="margin-top: 15px;"><button type="button" class="button button-primary" id="readyretext-add-rule">افزودن قانون جدید</button></p>
+        </div>
+
+        <script type="text/template" id="readyretext-rule-template">
+            <tr class="readyretext-rule-row">
+                <td><input type="text" class="large-text" name="readyretext_settings[rules][{index}][find]"></td>
+                <td><input type="text" class="large-text" name="readyretext_settings[rules][{index}][replace]"></td>
+                <td style="text-align:center;"><input type="checkbox" name="readyretext_settings[rules][{index}][is_regex]"></td>
+                <td style="text-align:center;"><input type="checkbox" name="readyretext_settings[rules][{index}][case_insensitive]" checked></td>
+                <td><button type="button" class="button button-secondary readyretext-remove-rule">حذف</button></td>
+            </tr>
+        </script>
+        
+        <script>
+        jQuery(document).ready(function($) {
+            let ruleIndex = <?php echo count($rules); ?>;
+            $('#readyretext-add-rule').on('click', function() {
+                $('.no-rules-row').remove();
+                let template = $('#readyretext-rule-template').html().replace(/{index}/g, ruleIndex++);
+                $('#readyretext-rules-container').append(template);
+            });
+            $('#readyretext-rules-wrapper').on('click', '.readyretext-remove-rule', function() {
+                $(this).closest('.readyretext-rule-row').remove();
+                if ($('.readyretext-rule-row').length === 0) {
+                     $('#readyretext-rules-container').append('<tr class="readyretext-rule-row no-rules-row"><td colspan="5">هیچ قانونی تعریف نشده است.</td></tr>');
+                }
+            });
+        });
+        </script>
+        <?php
     }
 
-    public function apply_replacements() {
-        $options = $this->get_options();
-        $scope = $options['scope'];
-        $replacements = $options['replacements'];
+    /**
+     * Adds a "Settings" link to the plugin's action links.
+     */
+    public function add_settings_link($links) {
+        $settings_link = '<a href="options-general.php?page=readyretext">' . __('Settings') . '</a>';
+        array_unshift($links, $settings_link);
+        return $links;
+    }
+    
+    /**
+     * Initializes the replacement logic based on scope.
+     */
+    private function init_replacement_hooks() {
+        $scope = $this->options['scope'] ?? 'frontend';
+        $rules = $this->options['rules'] ?? [];
 
-        if (empty($replacements)) return;
+        if (empty($rules) || ($scope === 'frontend' && is_admin()) || ($scope === 'admin' && !is_admin())) {
+            return;
+        }
 
-        // Check scope
-        $apply = false;
-        if ($scope === 'all') $apply = true;
-        elseif ($scope === 'frontend' && !is_admin()) $apply = true;
-        elseif ($scope === 'admin' && is_admin()) $apply = true;
-
-        if (!$apply) return;
-
-        // Build patterns/replacements
+        // Prepare patterns and replacements intelligently
         $patterns = [];
-        $replaces = [];
-        foreach ($replacements as $rule) {
-            $from = $rule['from'];
-            $to = $rule['to'];
-            $flags = 'u'; // Unicode
-            if ($rule['case_insensitive']) $flags .= 'i';
+        $replacements = [];
+        foreach ($rules as $rule) {
+            $flags = 'u'; // Always use unicode support
+            if (!empty($rule['case_insensitive'])) {
+                $flags .= 'i';
+            }
 
-            if ($rule['is_regex']) {
-                $pattern = $from; // User provides full pattern
+            if (!empty($rule['is_regex'])) {
+                // User provided a full regex pattern
+                $patterns[] = $rule['find'];
             } else {
-                $pattern = '/\b' . preg_quote($from, '/') . '\b/' . $flags;
+                // Build a safe regex for a simple word
+                $patterns[] = '/\b' . preg_quote($rule['find'], '/') . '\b/' . $flags;
             }
-
-            $patterns[] = $pattern;
-            $replaces[] = $to;
+            $replacements[] = $rule['replace'];
         }
+        
+        if (empty($patterns)) return;
 
-        // URL detection
-        $is_urlish = function ($str) {
-            if (!is_string($str) || $str === '') return false;
-            return (bool) preg_match('~(^[a-z]+://|://|www\.|/|\\\|\.php\b|\.html\b|\.htm\b|^#)~i', $str);
-        };
+        $is_urlish = fn($str) => is_string($str) && $str !== '' && preg_match('~(^[a-z]+://|://|www\.|/|\\\|\.php\b|\.html\b|\.htm\b|^#)~i', $str);
+        
+        $replace_plain = fn($text) => (!is_string($text) || $text === '' || $is_urlish($text)) ? $text : preg_replace($patterns, $replacements, $text);
 
-        // Plain replace
-        $replace_plain = function ($text) use ($patterns, $replaces, $is_urlish) {
-            if (!is_string($text) || $text === '' || $is_urlish($text)) return $text;
-            return preg_replace($patterns, $replaces, $text);
-        };
-
-        // HTML replace
-        $replace_html_textnodes = function ($html) use ($patterns, $replaces) {
-            if (!is_string($html) || $html === '') return $html;
-
-            if (strip_tags($html) === $html) {
-                return preg_replace($patterns, $replaces, $html);
-            }
+        $replace_html_textnodes = function ($html) use ($patterns, $replacements) {
+            if (!is_string($html) || trim($html) === '') return $html;
+            if (strip_tags($html) === $html) return preg_replace($patterns, $replacements, $html);
 
             $dom = new DOMDocument();
             libxml_use_internal_errors(true);
@@ -224,48 +278,43 @@ class ReadyReText {
             if (!$loaded) return $html;
 
             $xpath = new DOMXPath($dom);
-            foreach ($xpath->query('//text()') as $textNode) {
-                $t = $textNode->nodeValue;
-                if ($t === '') continue;
-                $newT = preg_replace($patterns, $replaces, $t);
-                if ($newT !== $t) $textNode->nodeValue = $newT;
+            foreach ($xpath->query('//text()[not(ancestor::script) and not(ancestor::style)]') as $node) {
+                if (trim($node->nodeValue) === '') continue;
+                $newNodeValue = preg_replace($patterns, $replacements, $node->nodeValue);
+                if ($newNodeValue !== $node->nodeValue) $node->nodeValue = $newNodeValue;
             }
-
-            $out = $dom->saveHTML();
-            $out = preg_replace('/^<\?xml.*?\?>/i', '', $out);
-            return $out;
+            
+            $output = $dom->saveHTML();
+            return preg_replace('/^<\?xml.*?\?>/i', '', $output);
         };
 
-        // Apply filters
-        add_filter('gettext', function ($translated, $text, $domain) use ($replace_plain) {
-            return $replace_plain($translated);
-        }, 20, 3);
-
-        add_filter('ngettext', function ($single, $plural, $number, $domain) use ($replace_plain) {
-            return $number != 1 ? $replace_plain($plural) : $replace_plain($single);
-        }, 20, 4);
+        // ===== WordPress Filters =====
+        add_filter('gettext', $replace_plain, 20);
+        add_filter('ngettext', fn($s, $p, $n) => (1 != $n ? $replace_plain($p) : $replace_plain($s)), 20, 3);
 
         $html_filters = [
             'the_content', 'the_excerpt', 'comment_text', 'widget_text', 'widget_block_content',
             'the_tags', 'the_category', 'the_author', 'wp_nav_menu_items', 'wp_list_pages',
             'the_archive_title', 'the_archive_description',
+            'woocommerce_product_title', 'woocommerce_short_description',
         ];
-        foreach ($html_filters as $hook) {
-            add_filter($hook, $replace_html_textnodes, 20);
-        }
+        foreach ($html_filters as $hook) add_filter($hook, $replace_html_textnodes, 20);
 
         add_filter('the_title', $replace_plain, 20);
-        add_filter('document_title_parts', function ($parts) use ($replace_plain) {
-            return is_array($parts) ? array_map($replace_plain, $parts) : $parts;
-        }, 20);
-        add_filter('nav_menu_item_title', $replace_plain, 20, 2);
-        add_filter('bloginfo', $replace_plain, 20, 2);
-
+        add_filter('document_title_parts', fn($p) => is_array($p) ? array_map($replace_plain, $p) : $p, 20);
+        add_filter('nav_menu_item_title', $replace_plain, 20);
+        
+        add_filter('bloginfo', function ($output, $show) use ($replace_plain) {
+            $cache_key = 'rrt_bloginfo_' . md5($show . serialize($this->options['rules']));
+            if (false === ($cached = get_transient($cache_key))) {
+                $cached = $replace_plain($output);
+                set_transient($cache_key, $cached, HOUR_IN_SECONDS);
+            }
+            return $cached;
+        }, 20, 2);
+        
         if (function_exists('acf_add_filter')) {
-            add_filter('acf/format_value', function ($value, $post_id, $field) use ($replace_plain, $replace_html_textnodes) {
-                if (!is_string($value)) return $value;
-                return $value !== strip_tags($value) ? $replace_html_textnodes($value) : $replace_plain($value);
-            }, 20, 3);
+            add_filter('acf/format_value', fn($v) => is_string($v) ? (($v !== strip_tags($v)) ? $replace_html_textnodes($v) : $replace_plain($v)) : $v, 20);
         }
     }
 }
