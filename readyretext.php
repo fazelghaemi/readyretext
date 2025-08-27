@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name:       Ready ReText
+ * Plugin Name:       Ready ReText | ردی ری‌تکست
  * Description:       یک افزونه پیشرفته برای جستجو و جایگزینی متن در تمام بخش‌های سایت وردپرس با پنل تنظیمات کامل.
  * Version:           4.0.0
- * Author:            Ready Studio & Gemini
+ * Author:            Ready Studio | FazelGhaemi
  * Author URI:        https://readystudio.ir/
  * License:           GPL-2.0+
  * License URI:       http://www.gnu.org/licenses/gpl-2.0.txt
