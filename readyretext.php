@@ -52,7 +52,7 @@ class ReadyReText {
             
             // In JS, we need to escape backslashes for the RegExp constructor
             $find_pattern = $rule['is_regex'] 
-                ? $rule['find'] 
+                ? str_replace('\\', '\\\\', $rule['find'])
                 : '\\b' . preg_quote($rule['find'], '/') . '\\b';
 
             $js_rules[] = [
@@ -61,6 +61,8 @@ class ReadyReText {
                 'flags'   => $flags,
             ];
         }
+        
+        if (empty($js_rules)) return;
 
         wp_enqueue_script('readyretext-frontend-replacer', plugin_dir_url(__FILE__) . 'assets/frontend-replacer.js', [], '4.0.0', true);
         wp_localize_script('readyretext-frontend-replacer', 'readyReTextData', [
@@ -281,11 +283,14 @@ class ReadyReText {
             return (!is_string($text) || $text === '' || $is_urlish) ? $text : preg_replace($patterns, $replacements, $text);
         };
 
-        // Apply only essential server-side filters
+        // Apply only essential server-side filters for SEO and core functionality
         add_filter('gettext', $replace_plain, 20);
         add_filter('ngettext', function($s, $p, $n) use ($replace_plain) { return (1 != $n ? $replace_plain($p) : $replace_plain($s)); }, 20, 3);
         add_filter('the_title', $replace_plain, 20);
-        add_filter('wp_title', $replace_plain, 20);
+        add_filter('wp_title_parts', $replace_plain, 20);
+        add_filter('document_title_parts', function($parts) use ($replace_plain) {
+             return is_array($parts) ? array_map($replace_plain, $parts) : $replace_plain($parts);
+        }, 20);
     }
 }
 new ReadyReText();
