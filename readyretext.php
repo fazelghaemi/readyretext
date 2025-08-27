@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Ready ReText
  * Description:       یک افزونه پیشرفته برای جستجو و جایگزینی متن در تمام بخش‌های سایت وردپرس با پنل تنظیمات کامل.
- * Version:           3.2.0
+ * Version:           3.3.0
  * Author:            Ready Studio & Gemini
  * Author URI:        https://readystudio.ir/
  * License:           GPL-2.0+
@@ -28,7 +28,7 @@ class ReadyReText {
 
     public function enqueue_admin_styles($hook) {
         if ('settings_page_readyretext' !== $hook) return;
-        wp_enqueue_style('readyretext-admin-styles', plugin_dir_url(__FILE__) . 'assets/admin-styles.css', [], '3.2.0');
+        wp_enqueue_style('readyretext-admin-styles', plugin_dir_url(__FILE__) . 'assets/admin-styles.css', [], '3.3.0');
     }
 
     public function add_admin_menu() {
@@ -70,10 +70,8 @@ class ReadyReText {
 
     public function register_settings() {
         register_setting('readyretext_settings_group', 'readyretext_settings', [$this, 'sanitize_settings']);
-        add_settings_section('readyretext_rules_section', esc_html__('قوانین جایگزینی', 'readyretext'), function() {
-            echo '<p>' . esc_html__('برای هر قانون، محدوده اعمال آن را به صورت مجزا مشخص کنید.', 'readyretext') . '</p>';
-        }, 'readyretext_rules');
-        add_settings_field('readyretext_rules_field', esc_html__('لیست قوانین', 'readyretext'), [$this, 'render_rules_field'], 'readyretext_rules', 'readyretext_rules_section');
+        add_settings_section('readyretext_rules_section', esc_html__('قوانین جایگزینی', 'readyretext'), null, 'readyretext_rules');
+        add_settings_field('readyretext_rules_field', '', [$this, 'render_rules_field'], 'readyretext_rules', 'readyretext_rules_section');
     }
 
     public function sanitize_settings($input) {
@@ -100,6 +98,7 @@ class ReadyReText {
         $rules = $this->options['rules'] ?? [];
         ?>
         <div id="readyretext-rules-wrapper">
+            <h3 class="rules-title"><?php esc_html_e('لیست قوانین', 'readyretext'); ?></h3>
             <table class="wp-list-table widefat fixed striped">
                 <thead>
                     <tr>
@@ -140,6 +139,13 @@ class ReadyReText {
             <p style="margin-top: 24px;">
                 <button type="button" class="readyretext-btn readyretext-btn-primary" id="readyretext-add-rule"><?php esc_html_e('افزودن قانون جدید', 'readyretext'); ?></button>
             </p>
+            <div class="readyretext-instructions">
+                <h4>راهنمای گزینه‌ها:</h4>
+                <ul>
+                    <li><strong>Regex:</strong> این گزینه را فقط زمانی فعال کنید که می‌خواهید از عبارات باقاعده (الگوهای پیچیده) استفاده کنید. برای جایگزینی کلمات ساده، آن را خاموش بگذارید.</li>
+                    <li><strong>عدم حساسیت:</strong> با فعال کردن این گزینه، جایگزینی بدون توجه به حروف کوچک یا بزرگ (مثلاً a و A) انجام می‌شود. برای زبان فارسی این گزینه معمولاً تأثیری ندارد.</li>
+                </ul>
+            </div>
         </div>
         <script type="text/template" id="readyretext-rule-template">
             <tr class="readyretext-rule-row">
